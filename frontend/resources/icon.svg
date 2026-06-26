@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Source logo for the MOT-UK Android app icon.
+       Export this to a 1024x1024 PNG (resources/icon.png), then generate all
+       Android icons/splash with @capacitor/assets. See docs/ANDROID.md. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f46e5"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Simple car silhouette -->
+  <g fill="#ffffff">
+    <path d="M250 600
+             l40 -120 c10 -30 36 -50 68 -50
+             h308 c32 0 58 20 68 50
+             l40 120
+             h36 c26 0 46 20 46 46
+             v70 c0 18 -14 32 -32 32
+             h-28
+             a64 64 0 0 1 -128 0
+             h-264
+             a64 64 0 0 1 -128 0
+             h-28 c-18 0 -32 -14 -32 -32
+             v-70 c0 -26 20 -46 46 -46 z
+             M360 470 l-26 90 h356 l-26 -90 c-4 -14 -16 -22 -30 -22 h-244 c-14 0 -26 8 -30 22 z"/>
+  </g>
+  <!-- wheels -->
+  <circle cx="372" cy="724" r="40" fill="#0f1729"/>
+  <circle cx="652" cy="724" r="40" fill="#0f1729"/>
+
+  <!-- MOT check badge -->
+  <g transform="translate(700,300)">
+    <circle r="120" fill="#16a34a"/>
+    <path d="M-52 6 l34 36 l72 -86" fill="none" stroke="#ffffff" stroke-width="26"
+          stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">MOT-UK</string>
+    <string name="title_activity_main">MOT-UK</string>
+    <string name="package_name">com.motuk.carcare</string>
+    <string name="custom_url_scheme">com.motuk.carcare</string>
+</resources>

@@ -1,0 +1,162 @@
+// Prisma schema for the MOT-UK car service app.
+//
+// Phase 2 (Foundation): defines the 5 core tables only.
+//   - roles
+//   - users
+//   - vehicles
+//   - service_entries
+//   - reminders
+//
+// Fields use simple types (String / DateTime) where the app needs flexible
+// lists (service type, category, status, etc.). The allowed values are
+// enforced in the frontend in later phases. This keeps the schema easy to
+// read and easy to extend.
+//
+// To regenerate the client:   npm run prisma:generate
+// To create the tables:        npm run prisma:migrate
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// roles
+// Defines a user's role (e.g. Owner, Driver, Admin).
+// ---------------------------------------------------------------------------
+model Role {
+  id        String   @id @default(cuid())
+  name      String   @unique
+  users     User[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("roles")
+}
+
+// ---------------------------------------------------------------------------
+// users
+// People who own / manage vehicles.
+// ---------------------------------------------------------------------------
+model User {
+  id           String          @id @default(cuid())
+  name         String
+  email        String          @unique
+  passwordHash String? // bcrypt hash (nullable so older rows are not broken)
+  roleId       String?
+  role         Role?           @relation(fields: [roleId], references: [id])
+  vehicles     Vehicle[]
+  vehicleAccess VehicleAccess[]
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  @@map("users")
+}
+
+// ---------------------------------------------------------------------------
+// vehicles
+// A UK vehicle profile.
+// ---------------------------------------------------------------------------
+model Vehicle {
+  id                 String         @id @default(cuid())
+  brandName          String // Vehicle Brand Name (e.g. Ford, BMW, Tesla)
+  model              String // Vehicle Model (e.g. Focus, 3 Series)
+  registeredYear     Int // Registered Year (e.g. 2019)
+  fuelType           String // Fuel Type (Petrol, Diesel, Electric, ...)
+  registrationNumber String         @unique // UK number plate
+  vehicleType        String? // Hatchback, SUV, etc. (optional, used later)
+  mileage            Int? // Current mileage (optional, used later)
+
+  // User ownership / role assignment
+  ownerId String?
+  owner   User?   @relation(fields: [ownerId], references: [id])
+
+  serviceEntries ServiceEntry[]
+  reminders      Reminder[]
+  accesses       VehicleAccess[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("vehicles")
+}
+
+// ---------------------------------------------------------------------------
+// vehicle_access
+// Gives a registered user a role on a vehicle they do not own.
+//   - Editor: can view the vehicle and add/edit its service entries
+//   - Viewer: can only view the vehicle and its entries
+// (The vehicle owner always has full control via Vehicle.ownerId.)
+// ---------------------------------------------------------------------------
+model VehicleAccess {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  role      String // "Editor" | "Viewer"
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([vehicleId, userId])
+  @@map("vehicle_access")
+}
+
+// ---------------------------------------------------------------------------
+// service_entries
+// A single MOT or service record for a vehicle.
+//
+// IMPORTANT: motDueDate (the legal UK MOT due date) is stored SEPARATELY
+// from recommendedServiceDate (the app's smart service recommendation).
+// ---------------------------------------------------------------------------
+model ServiceEntry {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  entryType   String  @default("Service") // MOT, Service, Repair, Insurance, Road Tax, Other
+  serviceType String // Service / MOT type (Full Service, MOT Test, ...)
+  category    String? // MOT / Service category (Brakes, Tyres, ...)
+
+  serviceDate            DateTime // Date the service / MOT was done
+  recommendedServiceDate DateTime? // Smart recommended NEXT service date
+  motDueDate             DateTime? // Legal UK MOT due date (kept separate)
+
+  amount Float? // Cost / amount
+  status String // Completed, Upcoming, Due Soon, Overdue, Cancelled
+  notes  String? // Notes / fault description
+
+  reminders Reminder[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("service_entries")
+}
+
+// ---------------------------------------------------------------------------
+// reminders
+// A reminder linked to a vehicle (and optionally a specific service entry).
+// ---------------------------------------------------------------------------
+model Reminder {
+  id        String  @id @default(cuid())
+  vehicleId String
+  vehicle   Vehicle @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+
+  serviceEntryId String?
+  serviceEntry   ServiceEntry? @relation(fields: [serviceEntryId], references: [id], onDelete: SetNull)
+
+  reminderDate DateTime
+  message      String?
+  status       String // e.g. Upcoming, Due Soon, Overdue, Completed
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("reminders")
+}
