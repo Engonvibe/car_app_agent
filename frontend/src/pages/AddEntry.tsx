@@ -1,3 +1,4 @@
+import { useLocation } from "react-router-dom";
 import { useEffect, useState } from "react";
 import {
   vehiclesApi,
@@ -47,6 +48,7 @@ function vehicleLabel(v: Vehicle): string {
 }
 
 export default function AddEntry() {
+  const location = useLocation();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [entries, setEntries] = useState<ServiceEntry[]>([]);
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -85,6 +87,69 @@ export default function AddEntry() {
   useEffect(() => {
     refresh();
   }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+
+    const entryId = params.get("entryId");
+    const vehicleName = params.get("vehicle");
+    const entryType = params.get("entryType");
+    const serviceType = params.get("serviceType");
+    const status = params.get("status");
+
+    if (vehicles.length === 0) return;
+
+    const matchedEntry = entryId
+      ? entries.find((en) => en.id === entryId)
+      : null;
+
+    if (matchedEntry) {
+      setForm({
+        vehicleId: matchedEntry.vehicleId,
+        entryType: matchedEntry.entryType,
+        serviceType: matchedEntry.serviceType,
+        category: matchedEntry.category ?? "",
+        serviceDate: matchedEntry.serviceDate.slice(0, 10),
+        motDueDate: matchedEntry.motDueDate
+          ? matchedEntry.motDueDate.slice(0, 10)
+          : "",
+        amount: matchedEntry.amount != null ? String(matchedEntry.amount) : "",
+        status: "Done",
+        notes: matchedEntry.notes ?? "",
+      });
+
+      setEditingId(matchedEntry.id);
+      setError(null);
+      window.scrollTo({ top: 0, behavior: "smooth" });
+      return;
+    }
+
+    if (!vehicleName) return;
+
+    setForm((currentForm) => {
+      if (currentForm.vehicleId) return currentForm;
+
+      const matchedVehicle = vehicles.find((v) => {
+        const label = vehicleLabel(v).toLowerCase();
+        const reminderVehicle = vehicleName.toLowerCase();
+
+        return (
+          label === reminderVehicle ||
+          reminderVehicle.includes(v.registrationNumber.toLowerCase())
+        );
+      });
+
+      if (!matchedVehicle) return currentForm;
+
+      return {
+        ...currentForm,
+        vehicleId: matchedVehicle.id,
+        entryType: entryType || currentForm.entryType,
+        serviceType: serviceType || currentForm.serviceType,
+        status: status || "Done",
+      };
+    });
+  }, [location.search, vehicles, entries]);
 
   async function refresh() {
     setLoading(true);
@@ -309,7 +374,7 @@ export default function AddEntry() {
         <input
           id="serviceDate"
           className="field-input"
-          type="text"
+          type="date"
           placeholder="e.g. 12 May 2024"
           value={form.serviceDate}
           onChange={(e) => update("serviceDate", e.target.value)}
@@ -345,7 +410,7 @@ export default function AddEntry() {
         <input
           id="motDueDate"
           className="field-input"
-          type="text"
+          type="date"
           placeholder="e.g. 11/05/2025"
           value={form.motDueDate}
           onChange={(e) => update("motDueDate", e.target.value)}

@@ -15,7 +15,7 @@ export default function Layout() {
     <div className="app-shell">
       <header className="app-header">
         <div className="header-left">
-          <div className="title">MOT-UK</div>
+          <div className="title">Your AI Assistant for Car Care</div>
           <div className="subtitle">Car Service &amp; MOT Manager</div>
         </div>
         <div className="header-user">

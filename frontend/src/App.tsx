@@ -27,7 +27,7 @@ export default function App() {
     return (
       <div className="auth-screen">
         <div className="auth-card">
-          <div className="auth-brand">MOT-UK</div>
+          <div className="auth-brand">Your AI Assistant for Car Care</div>
           <p className="auth-sub">Loading…</p>
         </div>
       </div>

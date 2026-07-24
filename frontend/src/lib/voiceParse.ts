@@ -199,7 +199,7 @@ export function parseVoiceEntry(rawTranscript: string, vehicles: Vehicle[]): Voi
   // --- Status.
   if (/\b(done|completed?|finished)\b/.test(lower)) result.status = "Done";
   else if (/\boverdue\b/.test(lower)) result.status = "Overdue";
-  else if (/\bpending\b/.test(lower)) result.status = "Pending";
+  else if (/\bpending\b/.test(lower)) result.status = "Due";
   else if (/\bcancel(?:l)?ed\b/.test(lower)) result.status = "Cancelled";
   else if (/\bdue\b/.test(lower)) result.status = "Due";
 

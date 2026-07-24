@@ -1,97 +1,159 @@
-import { useRef, useState } from "react";
+import { useEffect, useState } from "react";
+import { Capacitor } from "@capacitor/core";
+import { SpeechRecognition } from "@capacitor-community/speech-recognition";
 import { MicIcon } from "./Icons";
 
 interface VoiceCaptureProps {
   onTranscript: (text: string) => void;
 }
 
-/**
- * Microphone button using the browser Web Speech API.
- *
- * - If speech recognition isn't available, it shows a friendly message and the
- *   manual form keeps working (this component never blocks typing).
- * - When the user finishes speaking, the final transcript is passed to
- *   onTranscript so the parent can fill the form for review.
- */
 export default function VoiceCapture({ onTranscript }: VoiceCaptureProps) {
-  // Detect support once.
-  const [supported] = useState(
-    () =>
-      typeof window !== "undefined" &&
-      !!((window as any).SpeechRecognition || (window as any).webkitSpeechRecognition)
-  );
   const [listening, setListening] = useState(false);
-  const [interim, setInterim] = useState("");
-  const recRef = useRef<any>(null);
+  const [message, setMessage] = useState(
+    'Tap the mic and speak. Example: "Oil change for Ford Focus on 12 May 2024, amount 120 pounds, status done."'
+  );
 
-  function start() {
-    const SR = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) return;
+  async function safeStopSpeech() {
+    try {
+      await Promise.race([
+        SpeechRecognition.stop(),
+        new Promise((resolve) => setTimeout(resolve, 500)),
+      ]);
+    } catch {
+      // Ignore stop errors.
+    }
+  }
 
-    const rec = new SR();
-    rec.lang = "en-GB";
-    rec.interimResults = true;
-    rec.continuous = false;
-    rec.maxAlternatives = 1;
+  async function startNativeSpeech() {
+    if (listening) return;
 
-    let finalText = "";
-    rec.onresult = (e: any) => {
-      let intr = "";
-      for (let i = e.resultIndex; i < e.results.length; i++) {
-        const r = e.results[i];
-        if (r.isFinal) finalText += r[0].transcript;
-        else intr += r[0].transcript;
+    try {
+      setListening(true);
+      setMessage("Checking microphone...");
+
+      const available = await SpeechRecognition.available();
+
+      if (!available.available) {
+        setMessage("Speech recognition is not available on this device.");
+        return;
       }
-      setInterim(intr);
-    };
-    rec.onerror = () => {
-      setListening(false);
-    };
-    rec.onend = () => {
-      setListening(false);
-      setInterim("");
-      if (finalText.trim()) onTranscript(finalText.trim());
-    };
 
-    recRef.current = rec;
+      const permissionStatus = await SpeechRecognition.checkPermissions();
+
+      if (permissionStatus.speechRecognition !== "granted") {
+        const permissionRequest = await SpeechRecognition.requestPermissions();
+
+        if (permissionRequest.speechRecognition !== "granted") {
+          setMessage("Microphone permission is required for voice input.");
+          return;
+        }
+      }
+
+      setMessage("Listening... Speak now.");
+
+      const result = await SpeechRecognition.start({
+        language: "en-GB",
+        maxResults: 1,
+        partialResults: false,
+        popup: true,
+        prompt: "Speak your service entry",
+      });
+
+      const transcript = result.matches?.[0]?.trim();
+
+      if (transcript) {
+        onTranscript(transcript);
+        setMessage(`Heard: ${transcript}`);
+      } else {
+        setMessage("No voice captured. Please try again.");
+      }
+    } catch (error) {
+      console.error("Native speech recognition error:", error);
+      setMessage(
+        error instanceof Error
+          ? error.message
+          : "Voice capture failed. Please try again."
+      );
+    } finally {
+      setListening(false);
+      await safeStopSpeech();
+    }
+  }
+
+  function startBrowserSpeech() {
+    if (listening) return;
+
+    const SR =
+      (window as any).SpeechRecognition ||
+      (window as any).webkitSpeechRecognition;
+
+    if (!SR) {
+      setMessage("Voice input is not supported in this browser.");
+      return;
+    }
+
+    const recognition = new SR();
+
+    recognition.lang = "en-GB";
+    recognition.interimResults = false;
+    recognition.continuous = false;
+    recognition.maxAlternatives = 1;
+
     setListening(true);
-    rec.start();
+    setMessage("Listening... Speak now.");
+
+    recognition.onresult = (event: any) => {
+      const transcript = event.results?.[0]?.[0]?.transcript?.trim();
+
+      if (transcript) {
+        onTranscript(transcript);
+        setMessage(`Heard: ${transcript}`);
+      } else {
+        setMessage("No voice captured. Please try again.");
+      }
+    };
+
+    recognition.onerror = () => {
+      setMessage("Voice capture failed. Please try again.");
+      setListening(false);
+    };
+
+    recognition.onend = () => {
+      setListening(false);
+    };
+
+    recognition.start();
   }
 
-  function stop() {
-    recRef.current?.stop();
+  function handleMicClick() {
+    if (Capacitor.isNativePlatform()) {
+      startNativeSpeech();
+    } else {
+      startBrowserSpeech();
+    }
   }
 
-  if (!supported) {
-    return (
-      <div className="voice-box">
-        <button type="button" className="mic-btn" disabled aria-label="Voice input unavailable">
-          <MicIcon size={24} />
-        </button>
-        <div className="field-hint">
-          Voice input isn't supported in this browser. You can still fill the form
-          manually below. (Try Chrome on Android or desktop.)
-        </div>
-      </div>
-    );
-  }
+  useEffect(() => {
+    return () => {
+      if (Capacitor.isNativePlatform()) {
+        safeStopSpeech();
+      }
+    };
+  }, []);
 
   return (
     <div className="voice-box">
       <button
         type="button"
         className={`mic-btn ${listening ? "listening" : ""}`}
-        onClick={listening ? stop : start}
-        aria-label={listening ? "Stop listening" : "Start voice input"}
+        onClick={handleMicClick}
+        disabled={listening}
+        aria-label="Start voice input"
       >
         <MicIcon size={24} />
       </button>
-      <div className="field-hint">
-        {listening
-          ? "Listening… tap to stop."
-          : 'Tap the mic and speak. Example: "Oil change for Ford Focus on 12 May 2024, amount 120 pounds, status done."'}
-      </div>
-      {interim && <div className="voice-interim">{interim}</div>}
+
+      <div className="field-hint">{message}</div>
     </div>
   );
 }

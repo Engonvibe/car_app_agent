@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { remindersApi, type RemindersResult, type ReminderItem } from "../lib/api";
 import { formatDisplay } from "../lib/dates";
 
@@ -8,7 +9,13 @@ function statusClass(status: ReminderItem["status"]): string {
   return "badge badge-upcoming";
 }
 
-function ReminderCard({ item }: { item: ReminderItem }) {
+function ReminderCard({
+  item,
+  onUpdate,
+}: {
+  item: ReminderItem;
+  onUpdate: (item: ReminderItem) => void;
+}) {
   return (
     <div className="card">
       <div className="vehicle-head">
@@ -18,14 +25,26 @@ function ReminderCard({ item }: { item: ReminderItem }) {
         </div>
         <span className={statusClass(item.status)}>{item.status}</span>
       </div>
+
       <div className="vehicle-meta">
         <span>📅 {formatDisplay(item.date)}</span>
+      </div>
+
+      <div className="form-actions">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => onUpdate(item)}
+        >
+          Update service
+        </button>
       </div>
     </div>
   );
 }
 
 export default function Reminders() {
+  const navigate = useNavigate();
   const [data, setData] = useState<RemindersResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -34,9 +53,28 @@ export default function Reminders() {
     remindersApi
       .list()
       .then(setData)
-      .catch((e) => setError(e instanceof Error ? e.message : "Could not load reminders"))
+      .catch((e) =>
+        setError(e instanceof Error ? e.message : "Could not load reminders")
+      )
       .finally(() => setLoading(false));
   }, []);
+
+  function openAddForReminder(item: ReminderItem) {
+    const entryType = item.type.toLowerCase().includes("mot") ? "MOT" : "Service";
+
+    const params = new URLSearchParams({
+      entryId: item.id,
+      vehicle: item.vehicle,
+      entryType,
+      serviceType: item.serviceType,
+      status: "Done",
+    });
+
+    navigate({
+      pathname: "/add-entry",
+      search: `?${params.toString()}`,
+    });
+  }
 
   return (
     <div>
@@ -44,25 +82,47 @@ export default function Reminders() {
       <p className="page-subtitle">Upcoming services and MOT due dates.</p>
 
       {loading ? (
-        <div className="card"><p>Loading reminders...</p></div>
+        <div className="card">
+          <p>Loading reminders...</p>
+        </div>
       ) : error || !data ? (
-        <div className="card"><p className="error-text">{error ?? "No data"}</p></div>
+        <div className="card">
+          <p className="error-text">{error ?? "No data"}</p>
+        </div>
       ) : (
         <>
           {/* Recommended service reminders. */}
           <h3 className="section-heading">Recommended services</h3>
+
           {data.recommendedServices.length === 0 ? (
-            <div className="card"><p>No recommended service reminders yet.</p></div>
+            <div className="card">
+              <p>No recommended service reminders yet.</p>
+            </div>
           ) : (
-            data.recommendedServices.map((r) => <ReminderCard key={r.id} item={r} />)
+            data.recommendedServices.map((r) => (
+              <ReminderCard
+                key={r.id}
+                item={r}
+                onUpdate={openAddForReminder}
+              />
+            ))
           )}
 
           {/* MOT due reminders — kept SEPARATE from recommended services. */}
           <h3 className="section-heading">MOT due</h3>
+
           {data.motDue.length === 0 ? (
-            <div className="card"><p>No MOT due reminders yet.</p></div>
+            <div className="card">
+              <p>No MOT due reminders yet.</p>
+            </div>
           ) : (
-            data.motDue.map((r) => <ReminderCard key={r.id} item={r} />)
+            data.motDue.map((r) => (
+              <ReminderCard
+                key={r.id}
+                item={r}
+                onUpdate={openAddForReminder}
+              />
+            ))
           )}
         </>
       )}

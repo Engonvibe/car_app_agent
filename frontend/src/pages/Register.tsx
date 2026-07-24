@@ -33,7 +33,7 @@ export default function Register() {
       <div className="auth-inner">
         <div className="auth-hero">
           <CarArt className="auth-car" />
-          <div className="auth-hero-brand">MOT-UK</div>
+          <div className="auth-hero-brand">Your AI Assistant for Car Care</div>
           <div className="auth-hero-tag">Car Service &amp; MOT Manager</div>
         </div>
 

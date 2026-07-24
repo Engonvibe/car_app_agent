@@ -15,7 +15,6 @@ export const ENTRY_TYPES: string[] = [
 /** Status options (Phase 4 list). */
 export const STATUSES: string[] = [
   "Done",
-  "Pending",
   "Due",
   "Overdue",
   "Cancelled",
