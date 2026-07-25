@@ -1,0 +1,31 @@
+{
+  "model_name": "Random Forest Regressor",
+  "target": "recommended_interval_days",
+  "feature_columns": [
+    "Crankshaft",
+    "Overheating",
+    "Lubricant",
+    "Misfires",
+    "Piston",
+    "Starter",
+    "Temperature",
+    "Humidity",
+    "Altitude"
+  ],
+  "possible_outputs_days": [
+    7,
+    90,
+    180,
+    365
+  ],
+  "mean_absolute_error_days_raw": 18.28,
+  "mean_absolute_error_days_rounded": 10.1,
+  "r2_score": 0.7517,
+  "target_distribution": {
+    "7": 155,
+    "90": 4850,
+    "180": 4830,
+    "365": 165
+  },
+  "important_note": "If the original dataset did not contain real recommended service dates, recommended_interval_days was derived from a risk-score formula based on vehicle health indicators."
+}

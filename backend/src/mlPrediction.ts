@@ -1,4 +1,6 @@
+import { execFileSync } from "child_process";
 import fs from "fs";
+import os from "os";
 import path from "path";
 
 export type VhmsInput = {
@@ -13,119 +15,102 @@ export type VhmsInput = {
   Altitude?: number;
 };
 
-type DatasetRow = VhmsInput & {
-  recommended_interval_days?: number;
+type ModelPredictionResult = {
+  raw_interval_days: number;
+  recommended_interval_days: number;
 };
 
-const DATASET_PATH = path.join(
-  process.cwd(),
-  "ml",
-  "augmented_data_with_environment.csv"
-);
+const ML_DIR = path.join(process.cwd(), "ml");
+const PREDICT_SCRIPT_PATH = path.join(ML_DIR, "predict_recommendation_model.py");
+const MODEL_PATH = path.join(ML_DIR, "recommended_service_model.pkl");
 
-let cachedRows: DatasetRow[] | null = null;
-
-function toNumber(value: string | undefined): number | undefined {
-  if (value == null || value.trim() === "") return undefined;
-
-  const parsed = Number(value);
-
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function parseCsvLine(line: string): string[] {
-  return line.split(",").map((value) => value.trim().replace(/^"|"$/g, ""));
-}
-
-function loadDataset(): DatasetRow[] {
-  if (cachedRows) return cachedRows;
-
-  if (!fs.existsSync(DATASET_PATH)) {
-    cachedRows = [];
-    return cachedRows;
-  }
-
-  const csvText = fs.readFileSync(DATASET_PATH, "utf-8");
-  const lines = csvText.split(/\r?\n/).filter(Boolean);
-
-  if (lines.length < 2) {
-    cachedRows = [];
-    return cachedRows;
-  }
-
-  const headers = parseCsvLine(lines[0]);
-
-  cachedRows = lines.slice(1).map((line) => {
-    const values = parseCsvLine(line);
-    const row: Record<string, string> = {};
-
-    headers.forEach((header, index) => {
-      row[header] = values[index];
-    });
-
-    return {
-      Crankshaft: toNumber(row.Crankshaft),
-      Overheating: toNumber(row.Overheating),
-      Lubricant: toNumber(row.Lubricant),
-      Misfires: toNumber(row.Misfires),
-      Piston: toNumber(row.Piston),
-      Starter: toNumber(row.Starter),
-      Temperature: toNumber(row.Temperature),
-      Humidity: toNumber(row.Humidity),
-      Altitude: toNumber(row.Altitude),
-      recommended_interval_days: toNumber(row.recommended_interval_days),
-    };
-  });
-
-  return cachedRows;
-}
-
-export function hasCompleteVhms(input: VhmsInput): boolean {
+export function hasCompleteVhms(
+  input: Partial<VhmsInput> | null | undefined
+): boolean {
   return (
-    input.Crankshaft != null &&
-    input.Overheating != null &&
-    input.Lubricant != null &&
-    input.Misfires != null &&
-    input.Piston != null &&
-    input.Starter != null &&
-    input.Temperature != null &&
-    input.Humidity != null &&
-    input.Altitude != null
+    input?.Crankshaft != null &&
+    input?.Overheating != null &&
+    input?.Lubricant != null &&
+    input?.Misfires != null &&
+    input?.Piston != null &&
+    input?.Starter != null &&
+    input?.Temperature != null &&
+    input?.Humidity != null &&
+    input?.Altitude != null
   );
 }
 
-function distance(input: VhmsInput, row: DatasetRow): number {
-  const keys: Array<keyof VhmsInput> = [
-    "Crankshaft",
-    "Overheating",
-    "Lubricant",
-    "Misfires",
-    "Piston",
-    "Starter",
-    "Temperature",
-    "Humidity",
-    "Altitude",
-  ];
+function runPythonModel(input: Partial<VhmsInput>): ModelPredictionResult | null {
+  if (!fs.existsSync(PREDICT_SCRIPT_PATH)) {
+    console.warn("[mlPrediction] Prediction script not found:", PREDICT_SCRIPT_PATH);
+    return null;
+  }
 
-  return keys.reduce((total, key) => {
-    const inputValue = input[key] ?? 0;
-    const rowValue = row[key] ?? 0;
-    const diff = inputValue - rowValue;
+  if (!fs.existsSync(MODEL_PATH)) {
+    console.warn("[mlPrediction] Trained model not found:", MODEL_PATH);
+    return null;
+  }
 
-    return total + diff * diff;
-  }, 0);
-}
+  const tempInputPath = path.join(os.tmpdir(), `vhms-input-${Date.now()}.json`);
 
-export function predictVhms(input: VhmsInput): number | null {
-  const rows = loadDataset().filter(
-    (row) => row.recommended_interval_days != null
+  fs.writeFileSync(tempInputPath, JSON.stringify(input), "utf-8");
+
+  const pythonCommands: Array<{ command: string; args: string[] }> = [];
+
+  if (process.env.PYTHON_BIN) {
+    pythonCommands.push({
+      command: process.env.PYTHON_BIN,
+      args: [PREDICT_SCRIPT_PATH, tempInputPath],
+    });
+  }
+
+  pythonCommands.push(
+    {
+      command: "python",
+      args: [PREDICT_SCRIPT_PATH, tempInputPath],
+    },
+    {
+      command: "py",
+      args: ["-3.12", PREDICT_SCRIPT_PATH, tempInputPath],
+    }
   );
 
-  if (rows.length === 0) return null;
+  try {
+    for (const item of pythonCommands) {
+      try {
+        const output = execFileSync(item.command, item.args, {
+          cwd: process.cwd(),
+          encoding: "utf-8",
+          timeout: 30000,
+        });
 
-  const nearestRow = rows.reduce((best, current) => {
-    return distance(input, current) < distance(input, best) ? current : best;
-  });
+        return JSON.parse(output.trim()) as ModelPredictionResult;
+      } catch (error) {
+        console.warn(
+          `[mlPrediction] Failed with ${item.command}:`,
+          error instanceof Error ? error.message : error
+        );
+      }
+    }
 
-  return nearestRow.recommended_interval_days ?? null;
+    return null;
+  } finally {
+    if (fs.existsSync(tempInputPath)) {
+      fs.unlinkSync(tempInputPath);
+    }
+  }
+}
+
+export function predictVhms(input: Partial<VhmsInput>): number | null {
+  if (!hasCompleteVhms(input)) {
+    return null;
+  }
+
+  const result = runPythonModel(input);
+
+  if (!result) {
+    return null;
+  }
+
+  return result.recommended_interval_days;
 }

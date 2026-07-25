@@ -1,1 +1,3 @@
-# No Python packages required for current TypeScript dataset CSV prediction logic.
+﻿pandas
+scikit-learn
+joblib
