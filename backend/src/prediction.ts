@@ -1,23 +1,24 @@
 import { addMonths } from "./dates";
+import { hasCompleteVhms, predictVhms, VhmsInput } from "./mlPrediction";
 
 /* ---------------------------------------------------------------------------
-   Smart (but explainable) service prediction engine.
+   Smart and explainable service prediction engine.
 
-   This is RULE-BASED on purpose — no machine learning. Every adjustment is a
-   simple, documented rule so it can be explained in a college project and
-   reproduced by hand.
+   Two paths are used in this file:
 
-   How it works:
-   1. Start with a BASE interval (in months) that depends on the Service Type.
-      e.g. an Oil Change is due more often than a Timing Belt.
-   2. Multiply that base by a series of factors based on the vehicle and entry:
-      fuel type, mileage, vehicle age, brand/model (performance/luxury),
-      category (safety-critical), and entry type.
-   3. Blend in the vehicle's own service history if we have enough of it.
-   4. The Recommended Service Date = Service Date + the final interval.
+   1. RULE-BASED prediction:
+      This is the normal service recommendation logic. It uses vehicle details
+      such as fuel type, mileage, age, brand, category and service history.
 
-   IMPORTANT: This only ever affects the Recommended Service Date.
-   It NEVER touches the MOT Due Date, which is a separate, user-entered field.
+   2. DATASET-BASED prediction:
+      If the app receives a complete set of VHMS/vehicle-health values, the app
+      checks the inserted dataset file through backend/src/mlPrediction.ts.
+      The dataset gives recommended interval days such as 7, 90, 180 or 365.
+      These days are converted into app-friendly service months.
+
+   IMPORTANT:
+   The prediction never changes the MOT Due Date. MOT Due Date is entered by
+   the user separately.
 --------------------------------------------------------------------------- */
 
 export interface PredictionVehicle {
@@ -36,16 +37,19 @@ export interface PredictionInput {
   category?: string | null;
   serviceDateIso: string; // "YYYY-MM-DD"
   historyDatesIso?: string[]; // other service dates for the same vehicle
+  vhms?: Partial<VhmsInput> | null; // optional dataset/vehicle-health values
 }
 
 export interface PredictionResult {
   intervalMonths: number;
   recommendedServiceDate: string; // "YYYY-MM-DD"
-  reasons: string[]; // short cause clauses, e.g. "this is a diesel vehicle"
-  explanation: string; // one friendly sentence
+  reasons: string[];
+  explanation: string;
+  source: "rule" | "dataset";
+  datasetIntervalDays?: number | null;
 }
 
-/** Base service interval (months) per service type. Falls back to 12. */
+/** Base service interval in months per service type. Falls back to 12. */
 const BASE_INTERVAL_MONTHS: Record<string, number> = {
   "Oil Change": 6,
   "Oil Filter Replacement": 6,
@@ -89,20 +93,32 @@ const BASE_INTERVAL_MONTHS: Record<string, number> = {
   "Timing Belt Replacement": 60,
 };
 
-// Brands that are typically performance / luxury and need more frequent,
-// specialist servicing.
 const PERFORMANCE_LUXURY_BRANDS = new Set([
-  "Ferrari", "Lamborghini", "McLaren", "Aston Martin", "Bentley",
-  "Rolls-Royce", "Porsche", "Maserati", "Lotus", "Alpine", "Morgan",
-  "Caterham", "Corvette",
+  "Ferrari",
+  "Lamborghini",
+  "McLaren",
+  "Aston Martin",
+  "Bentley",
+  "Rolls-Royce",
+  "Porsche",
+  "Maserati",
+  "Lotus",
+  "Alpine",
+  "Morgan",
+  "Caterham",
+  "Corvette",
 ]);
 
-// Performance trims/models (keyword match on the model name).
 const PERFORMANCE_MODEL_RE =
   /\b(M[0-9]|RS\d?|AMG|GTI?|GTR|GT3|GT4|Type R|Nismo|ST|Cupra|Trofeo|Competizione|Black Series|Vantage|Huracan)\b/i;
 
-// Categories that are safety-critical and worth checking a little sooner.
-const SAFETY_CRITICAL = new Set(["Brakes", "Tyres", "Suspension", "Steering", "Wheels"]);
+const SAFETY_CRITICAL = new Set([
+  "Brakes",
+  "Tyres",
+  "Suspension",
+  "Steering",
+  "Wheels",
+]);
 
 const RENEWAL_TYPES = new Set(["Insurance", "Road Tax"]);
 
@@ -110,35 +126,50 @@ function currentYear(): number {
   return new Date().getFullYear();
 }
 
-/** Average gap in months between a sorted list of dates. */
+/** Average gap in months between a sorted list of service dates. */
 function averageGapMonths(datesIso: string[]): number | null {
   if (datesIso.length < 2) return null;
+
   const sorted = [...datesIso].sort();
   let totalDays = 0;
+
   for (let i = 1; i < sorted.length; i++) {
     const a = new Date(`${sorted[i - 1]}T00:00:00Z`).getTime();
     const b = new Date(`${sorted[i]}T00:00:00Z`).getTime();
     totalDays += (b - a) / (1000 * 60 * 60 * 24);
   }
+
   const avgDays = totalDays / (sorted.length - 1);
   return avgDays / 30.44;
 }
 
 /**
- * Predict the recommended next-service date and explain why.
+ * Convert dataset output days into app service interval months.
+ * The dataset gives 7, 90, 180 or 365 days.
+ */
+function datasetDaysToMonths(days: number): number {
+  if (days <= 30) return 1;
+  if (days <= 120) return 3;
+  if (days <= 240) return 6;
+  return 12;
+}
+
+/**
+ * Rule-based recommended next-service date.
  */
 export function predictRecommendation(input: PredictionInput): PredictionResult {
   const { vehicle, entryType, serviceType, category, serviceDateIso } = input;
   const history = input.historyDatesIso ?? [];
 
-  // Insurance / Road Tax are annual admin renewals, not mechanical servicing.
   if (RENEWAL_TYPES.has(entryType)) {
     const interval = 12;
+
     return {
       intervalMonths: interval,
       recommendedServiceDate: addMonths(serviceDateIso, interval),
       reasons: ["it's an annual renewal"],
-      explanation: `Recommended about ${interval} months after the date (annual renewal reminder).`,
+      explanation: `Recommended about ${interval} months after the date because this is an annual renewal reminder.`,
+      source: "rule",
     };
   }
 
@@ -146,7 +177,6 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
   let factor = 1;
   const reasons: string[] = [];
 
-  // --- Fuel type ---
   switch (vehicle.fuelType) {
     case "Diesel":
       factor *= 0.85;
@@ -166,11 +196,11 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
       reasons.push("it runs on LPG");
       break;
     default:
-      break; // Petrol / Other: no change
+      break;
   }
 
-  // --- Mileage ---
   const mileage = vehicle.mileage ?? null;
+
   if (mileage != null) {
     if (mileage >= 100000) {
       factor *= 0.75;
@@ -184,8 +214,8 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
     }
   }
 
-  // --- Vehicle age (from Registered Year) ---
   const age = currentYear() - vehicle.registeredYear;
+
   if (age >= 20) {
     factor *= 0.8;
     reasons.push("it's an older / classic vehicle");
@@ -196,7 +226,6 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
     factor *= 0.95;
   }
 
-  // --- Brand / model (performance or luxury) ---
   if (PERFORMANCE_LUXURY_BRANDS.has(vehicle.brandName)) {
     factor *= 0.85;
     reasons.push("it's a performance or luxury vehicle");
@@ -205,13 +234,11 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
     reasons.push("it's a performance model");
   }
 
-  // --- Category (safety-critical) ---
   if (category && SAFETY_CRITICAL.has(category)) {
     factor *= 0.9;
     reasons.push(`it involves a safety-critical system (${category})`);
   }
 
-  // --- Entry type ---
   if (entryType === "Repair") {
     factor *= 0.9;
     reasons.push("it's a follow-up after a repair");
@@ -219,22 +246,27 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
 
   let interval = Math.round(base * factor);
 
-  // --- Service history blend ---
   const avgGap = averageGapMonths(history);
+
   if (avgGap != null && avgGap > 0 && avgGap < interval) {
     interval = Math.round((interval + avgGap) / 2);
-    reasons.push(`your previous services were about ${Math.round(avgGap)} months apart`);
+    reasons.push(
+      `your previous services were about ${Math.round(avgGap)} months apart`
+    );
   }
 
-  // Keep within sensible bounds.
   interval = Math.max(1, Math.min(72, interval));
 
-  // --- Build a friendly explanation ---
   let explanation: string;
+
   if (interval < base && reasons.length) {
-    explanation = `Recommended sooner (about ${interval} months) because ${reasons.join("; ")}.`;
+    explanation = `Recommended sooner (about ${interval} months) because ${reasons.join(
+      "; "
+    )}.`;
   } else if (interval > base && reasons.length) {
-    explanation = `Recommended later (about ${interval} months) because ${reasons.join("; ")}.`;
+    explanation = `Recommended later (about ${interval} months) because ${reasons.join(
+      "; "
+    )}.`;
   } else {
     explanation = `Recommended about ${interval} months after the service date.`;
   }
@@ -244,5 +276,63 @@ export function predictRecommendation(input: PredictionInput): PredictionResult 
     recommendedServiceDate: addMonths(serviceDateIso, interval),
     reasons,
     explanation,
+    source: "rule",
   };
+}
+
+/**
+ * Dataset-aware recommendation.
+ *
+ * If complete VHMS values are provided, this function checks the inserted
+ * dataset through mlPrediction.ts and uses the nearest dataset pattern to
+ * suggest an interval. If the dataset is missing, incomplete, or cannot return
+ * a value, the app safely falls back to the rule-based prediction.
+ */
+export async function predictRecommendationSmart(
+  input: PredictionInput
+): Promise<PredictionResult> {
+  const vhmsInput = input.vhms ?? {};
+
+  if (!hasCompleteVhms(vhmsInput)) {
+    return predictRecommendation(input);
+  }
+
+  try {
+    const datasetIntervalDays = predictVhms(vhmsInput);
+
+    if (datasetIntervalDays == null) {
+      return predictRecommendation(input);
+    }
+
+    const interval = Math.max(
+      1,
+      Math.min(72, datasetDaysToMonths(datasetIntervalDays))
+    );
+
+    const recommended = addMonths(input.serviceDateIso, interval);
+
+    const explanation =
+      `Dataset-based vehicle health pattern suggested ${datasetIntervalDays} days. ` +
+      `The app converted this into about ${interval} month${
+        interval === 1 ? "" : "s"
+      } for the service reminder.`;
+
+    return {
+      intervalMonths: interval,
+      recommendedServiceDate: recommended,
+      reasons: [
+        `dataset-based vehicle health pattern suggested ${datasetIntervalDays} days`,
+      ],
+      explanation,
+      source: "dataset",
+      datasetIntervalDays,
+    };
+  } catch (err) {
+    console.warn(
+      "[prediction] Dataset path failed, falling back to rules:",
+      (err as Error).message
+    );
+
+    return predictRecommendation(input);
+  }
 }
